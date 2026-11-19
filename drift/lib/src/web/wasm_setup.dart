@@ -54,11 +54,17 @@ class WasmDatabaseOpener {
 
   _DriftWorker? _sharedWorker, _dedicatedWorker;
 
+  /// Whether the dedicated worker may host [WasmStorageImplementation.opfsShared]
+  /// when neither a shared worker nor `SharedArrayBuffer` can host OPFS.
+  final bool opfsInDedicatedWorker;
+  bool _opfsSharedInDedicated = false;
+
   WasmDatabaseOpener(
     this.sqlite3WasmUri,
     this.driftWorkerUri,
-    this.databaseName,
-  );
+    this.databaseName, {
+    this.opfsInDedicatedWorker = false,
+  });
 
   RequestCompatibilityCheck _createCompatibilityCheck() {
     return RequestCompatibilityCheck(databaseName ?? 'driftCompatibilityCheck');
@@ -135,6 +141,21 @@ class WasmDatabaseOpener {
 
       if (status.supportsIndexedDb) {
         availableImplementations.add(WasmStorageImplementation.unsafeIndexedDb);
+      }
+
+      // Safari: shared workers can't start workers and, without cross-origin
+      // isolation, there is no SharedArrayBuffer. The dedicated worker can
+      // still open OPFS files itself.
+      if (opfsInDedicatedWorker &&
+          status.canAccessOpfs &&
+          !availableImplementations.contains(
+            WasmStorageImplementation.opfsShared,
+          ) &&
+          !availableImplementations.contains(
+            WasmStorageImplementation.opfsLocks,
+          )) {
+        availableImplementations.add(WasmStorageImplementation.opfsShared);
+        _opfsSharedInDedicated = true;
       }
     } else {
       missingFeatures.add(MissingBrowserFeature.dedicatedWorkers);
@@ -247,6 +268,20 @@ final class _ProbeResult implements WasmProbeResult {
     final dedicatedWorker = opener._dedicatedWorker;
 
     switch (implementation) {
+      case WasmStorageImplementation.opfsShared
+          when opener._opfsSharedInDedicated && dedicatedWorker != null:
+        message = ServeDriftDatabase(
+          sqlite3WasmUri: opener.sqlite3WasmUri,
+          port: channel.port2,
+          storage: implementation,
+          databaseName: name,
+          initializationPort: initChannel?.port2,
+          enableMigrations: enableMigrations,
+          protocolVersion: dedicatedWorker.version,
+          newSerialization: dedicatedWorker.version >= ProtocolVersion.v3,
+        );
+
+        message.sendTo(dedicatedWorker.send);
       case WasmStorageImplementation.opfsShared:
       case WasmStorageImplementation.sharedIndexedDb:
         // Forward connection request to shared worker.

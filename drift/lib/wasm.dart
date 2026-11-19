@@ -276,15 +276,22 @@ class WasmDatabase extends DelegatedDatabase {
   /// Note that this method is only fully supported when using the drift worker
   /// shipped with the drift 2.11 release. Older workers are only supported when
   /// [databaseName] is non-null.
+  ///
+  /// With [opfsInDedicatedWorker], a dedicated worker hosts
+  /// [WasmStorageImplementation.opfsShared] where neither a shared worker nor
+  /// `SharedArrayBuffer` can host OPFS (Safari). Such a database is not shared
+  /// between tabs, so only enable it if the app runs in one tab at a time.
   static Future<WasmProbeResult> probe({
     required Uri sqlite3Uri,
     required Uri driftWorkerUri,
     String? databaseName,
+    bool opfsInDedicatedWorker = false,
   }) async {
     return await WasmDatabaseOpener(
       sqlite3Uri,
       driftWorkerUri,
       databaseName,
+      opfsInDedicatedWorker: opfsInDedicatedWorker,
     ).probe();
   }
 
